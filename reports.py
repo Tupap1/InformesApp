@@ -1,6 +1,6 @@
 """
 Módulo de Reportes con Modelos Dinámicos
-Maneja la generación de reportes de inventario, ventas y utilidad
+Maneja la generación de reportes de inventario, ventas y utilidad con formato mejorado
 """
 
 from sqlalchemy import Column, String, Float, Date, Boolean, Text, Integer, func, and_
@@ -8,11 +8,13 @@ from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime
 import pandas as pd
 from io import BytesIO
-from reportlab.lib.pagesizes import letter, landscape
+from reportlab.lib.pagesizes import letter, landscape, legal
 from reportlab.lib import colors
 from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, numbers
 
 Base = declarative_base()
 
@@ -81,6 +83,96 @@ def determinar_año_desde_filtros(filtros):
     return datetime.now().strftime('%y')
 
 
+def aplicar_formato_excel(worksheet, df, tiene_totales=False):
+    """
+    Aplica formato profesional a una hoja de Excel
+
+    Args:
+        worksheet: Hoja de trabajo de openpyxl
+        df: DataFrame de pandas con los datos
+        tiene_totales (bool): Si la última fila tiene totales
+    """
+    # Colores
+    color_encabezado = 'D3D3D3'  # Gris claro
+    color_totales = 'E8E8E8'  # Gris más claro
+
+    # Fuentes
+    fuente_encabezado = Font(name='Arial', size=11, bold=True, color='000000')
+    fuente_normal = Font(name='Arial', size=10)
+    fuente_totales = Font(name='Arial', size=10, bold=True)
+
+    # Bordes
+    borde_delgado = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+
+    # Aplicar formato a encabezados (fila 1)
+    for col_num, column_title in enumerate(df.columns, 1):
+        cell = worksheet.cell(row=1, column=col_num)
+        cell.font = fuente_encabezado
+        cell.fill = PatternFill(start_color=color_encabezado, end_color=color_encabezado, fill_type='solid')
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        cell.border = borde_delgado
+
+    # Aplicar formato a datos
+    num_rows = len(df)
+    ultima_fila_datos = num_rows if not tiene_totales else num_rows - 1
+
+    for row_num in range(2, ultima_fila_datos + 2):
+        for col_num in range(1, len(df.columns) + 1):
+            cell = worksheet.cell(row=row_num, column=col_num)
+            cell.font = fuente_normal
+            cell.border = borde_delgado
+            cell.alignment = Alignment(horizontal='left', vertical='center')
+
+            # Identificar columnas monetarias y aplicar formato
+            column_name = df.columns[col_num - 1].lower()
+            if any(keyword in column_name for keyword in ['precio', 'costo', 'valor', 'ganancia', 'venta', 'total', 'utilidad']):
+                # Verificar que no sea un porcentaje
+                if 'porcentaje' not in column_name and '%' not in column_name:
+                    cell.number_format = '"$"#,##0.00'
+                    cell.alignment = Alignment(horizontal='right', vertical='center')
+            elif 'cantidad' in column_name or 'existencia' in column_name:
+                cell.number_format = '#,##0.00'
+                cell.alignment = Alignment(horizontal='right', vertical='center')
+            elif 'porcentaje' in column_name or '%' in column_name:
+                cell.number_format = '0.00"%"'
+                cell.alignment = Alignment(horizontal='right', vertical='center')
+
+    # Aplicar formato a totales si existe
+    if tiene_totales:
+        fila_totales = num_rows + 1
+        for col_num in range(1, len(df.columns) + 1):
+            cell = worksheet.cell(row=fila_totales, column=col_num)
+            cell.font = fuente_totales
+            cell.fill = PatternFill(start_color=color_totales, end_color=color_totales, fill_type='solid')
+            cell.border = borde_delgado
+            cell.alignment = Alignment(horizontal='right', vertical='center')
+
+            # Formato monetario para totales
+            column_name = df.columns[col_num - 1].lower()
+            if any(keyword in column_name for keyword in ['precio', 'costo', 'valor', 'ganancia', 'venta', 'total', 'utilidad']):
+                if 'porcentaje' not in column_name and '%' not in column_name:
+                    cell.number_format = '"$"#,##0.00'
+
+    # Ajustar ancho de columnas
+    for col_num, column_title in enumerate(df.columns, 1):
+        column_letter = worksheet.cell(row=1, column=col_num).column_letter
+
+        # Calcular ancho basado en el título y contenido
+        max_length = len(str(column_title))
+        for row_num in range(2, min(num_rows + 2, 102)):  # Revisar hasta 100 filas
+            cell_value = str(worksheet.cell(row=row_num, column=col_num).value or '')
+            max_length = max(max_length, len(cell_value))
+
+        # Establecer ancho (con límite máximo de 50)
+        adjusted_width = min(max_length + 2, 50)
+        worksheet.column_dimensions[column_letter].width = adjusted_width
+
+
 # ========================================
 # FUNCIÓN: Crear Modelos Dinámicos
 # ========================================
@@ -100,51 +192,35 @@ def crear_modelo_venta(sufijo_año, db):
 
     class Venta(db.Model):
         __tablename__ = nombre_tabla
-        __table_args__ = {'extend_existing': True}  # Removido schema para usar DB por defecto
+        __table_args__ = {'extend_existing': True}
 
-        # Clave primaria compuesta
-        VENDOC = Column(Float, primary_key=True, nullable=False, default=0)
-        TRNTIPO = Column(String(5), primary_key=True, nullable=False, default='')
+        # Campos clave (primary key)
+        VENDOC = Column(String(20), primary_key=True)
+        TRNTIPO = Column(String(3), primary_key=True)
 
-        # Campos principales
-        VENCIA = Column(String(1), nullable=False, default='')
-        VENCLI = Column(String(15), nullable=False, default='')  # Cliente
-        VENNOM = Column(String(40), nullable=False, default='')  # Nombre cliente
-        VENVEN = Column(String(5), nullable=False, default='')   # Vendedor
-        VENVAL = Column(Float, nullable=False, default=0)        # Valor total
-        VENDES = Column(Float, nullable=False, default=0)        # Descuento
-        VENIMP = Column(Float, nullable=False, default=0)        # Impuesto
-        VENCOM = Column(Float, nullable=False, default=0)
-        VENNAR = Column(Float, nullable=False, default=0)
-        VENFEC = Column(Date, nullable=False, default=datetime(2000, 1, 1))  # Fecha venta
-        VENHOR = Column(String(8), nullable=False, default='')   # Hora
-        VENEST = Column(String(1), nullable=False, default='')   # Estado
-        VENCAM = Column(Float, nullable=False, default=0)
-        VENGRAVADO = Column(Float, nullable=False, default=0)
-        VENEXENTO = Column(Float, nullable=False, default=0)
-        SUCCOD = Column(String(2), nullable=False, default='')   # Sucursal
-        PRFACTCONV = Column(Float, nullable=False, default=0)
-        VENCIERRE = Column(Date, nullable=False, default=datetime(2000, 1, 1))
-        VENOBSERVA = Column(String(200), nullable=False, default='')
-        FACFACPOS = Column(Float, nullable=False, default=0)
-        FACTER = Column(String(80), nullable=False, default='')
-        FACTRNORI = Column(String(5), nullable=False, default='')
-        FACDOCORI = Column(Float, nullable=False, default=0)
-        FACBAT = Column(String(1), nullable=False, default='')
-        FACELECESTA = Column(String(1), nullable=False, default='P')
-        FACELECMNS = Column(Text, nullable=False)
-        CUFE = Column(Text, nullable=False)
-        devostat = Column(String(1), nullable=False, default='')
-        facidele = Column(Text, nullable=False)
-        expedition = Column(Date)
-        pdfstatus = Column(Boolean, nullable=False, default=False)
+        # Campos de información de venta
+        SUCCOD = Column(String(10), nullable=False)
+        VENFEC = Column(Date)
+        VENHOR = Column(String(8))
+        VENCLI = Column(String(20))
+        VENNOM = Column(String(100))
+        VENVAL = Column(Float, default=0)
+        VENDES = Column(Float, default=0)
+        VENIMP = Column(Float, default=0)
+        VENEST = Column(String(3))
+        VENNAR = Column(Float, default=0)  # Unidades narradas
+        FACELECESTA = Column(String(10))  # Estado factura electrónica
+        CLIIDENTIFI = Column(String(20))
+
+        def __repr__(self):
+            return f'<Venta {self.VENDOC}>'
 
     return Venta
 
 
 def crear_modelo_dventa(sufijo_año, db):
     """
-    Crea el modelo dinámico para la tabla DVENT (Detalle de Venta) del año especificado
+    Crea el modelo dinámico para la tabla DVENT (Detalle de venta) del año especificado
 
     Args:
         sufijo_año (str): Sufijo del año (ej: '25')
@@ -157,42 +233,25 @@ def crear_modelo_dventa(sufijo_año, db):
 
     class Dventa(db.Model):
         __tablename__ = nombre_tabla
-        __table_args__ = {'extend_existing': True}  # Removido schema para usar DB por defecto
+        __table_args__ = {'extend_existing': True}
 
-        # Clave primaria compuesta
-        DVENUM = Column(Float, primary_key=True, nullable=False, default=0)
-        DVECOD = Column(String(15), primary_key=True, nullable=False, default='')  # Código producto
-        SUCCOD = Column(String(2), primary_key=True, nullable=False, default='')
-        TRNTIPO = Column(String(5), primary_key=True, nullable=False, default='')
-        DVEID = Column(String(10), primary_key=True, nullable=False, default='')
+        # Campos clave (primary key)
+        DVENUM = Column(String(20), primary_key=True)  # Número de documento
+        TRNTIPO = Column(String(3), primary_key=True)  # Tipo de transacción
+        DVELIN = Column(Integer, primary_key=True)     # Línea del detalle
 
-        # Campos principales
-        DVEFEC = Column(Date, nullable=False, default=datetime(2000, 1, 1))
-        DVEVAL = Column(Float, nullable=False, default=0)          # Valor
-        DVECAN = Column(Float, nullable=False, default=0)          # Cantidad vendida
-        DVEDEP = Column(String(20), nullable=False, default='')
-        DVEPRE = Column(Float, nullable=False, default=0)          # Precio de venta
-        DVEIMP = Column(Float, nullable=False, default=0)          # Impuesto
-        DVEFECHAS = Column(String(100), nullable=False, default='')
-        DVEDESCUEN = Column(Float, nullable=False, default=0)      # Descuento
-        DVEPORIMP = Column(Float, nullable=False, default=0)
-        DVEIMP1 = Column(Float, nullable=False, default=0)
-        DVEPORIMP1 = Column(Float, nullable=False, default=0)
-        DVEOBSERVA = Column(String(250), nullable=False, default='')
-        PASCOSPRO = Column(Float, nullable=False, default=0)
-        PASCOS = Column(Float, nullable=False, default=0)          # Costo del producto
-        UBICODIGO = Column(String(5), nullable=False, default='')
-        DVECANDEV = Column(Float, nullable=False, default=0)
-        DVELOT = Column(Boolean, nullable=False, default=False)
-        DVEFECVEN = Column(Date, nullable=False, default=datetime(2000, 1, 1))
-        DVEVEN = Column(String(5), nullable=False, default='')
-        DVERETEFNTE = Column(Float, nullable=False, default=0)
-        DVERETEIVA = Column(Float, nullable=False, default=0)
-        cantunidd = Column(Float, nullable=False, default=0)
-        pasimpvaltip = Column(String(1), nullable=False, default='0')
-        reteIca = Column(Float, nullable=False, default=0)
-        taxpercent2 = Column(Float, nullable=False, default=0)
-        taxadv = Column(Float, nullable=False, default=0)
+        # Campos de detalle del producto
+        DVECOD = Column(String(50), nullable=False)    # Código del producto
+        DVECAN = Column(Float, nullable=False, default=0)  # Cantidad
+        DVEPRE = Column(Float, nullable=False, default=0)  # Precio unitario
+        DVEVAL = Column(Float, nullable=False, default=0)  # Valor total línea
+        DVEDESCUEN = Column(Float, default=0)  # Descuento línea
+        DVEIMP = Column(Float, default=0)  # Impuesto línea
+        PASCOS = Column(Float)  # Costo del producto
+        SUCCOD = Column(String(10))  # Sucursal
+
+        def __repr__(self):
+            return f'<Dventa {self.DVENUM}-{self.DVELIN}>'
 
     return Dventa
 
@@ -207,6 +266,7 @@ def reporte_productos_vendidos(db, Pas, Artic, filtros):
 
     Genera reporte de productos vendidos usando las tablas VENTA y DVENT
     Agrupa por producto (DVECOD) sumando todas las ventas
+    Incluye ARTCPR y ARTCOS de la tabla Artic
 
     Args:
         db: Instancia de SQLAlchemy
@@ -234,6 +294,8 @@ def reporte_productos_vendidos(db, Pas, Artic, filtros):
         func.avg(Dventa.DVEPRE).label('precio_promedio'),
         func.sum(Dventa.DVEVAL).label('valor_total_vendido'),
         func.coalesce(Artic.ARTEXI, 0).label('existencias'),
+        func.coalesce(Artic.ARTCPR, 0).label('costo_promedio'),  # NUEVO
+        func.coalesce(Artic.ARTCOS, 0).label('costo_articulo'),  # NUEVO
         func.coalesce(Pas.PASMAR, '').label('marca'),
         func.coalesce(Artic.PROCODIGO, '').label('proveedor')
     ).join(
@@ -283,15 +345,8 @@ def reporte_productos_vendidos(db, Pas, Artic, filtros):
     # Agrupar por producto
     query = query.group_by(Dventa.DVECOD)
 
-    # Ordenar por cantidad vendida (descendente)
-    query = query.order_by(func.sum(Dventa.DVECAN).desc())
-
-    # Debug: Mostrar SQL completo
-    from sqlalchemy.dialects import mysql
-    sql_compilado = str(query.statement.compile(dialect=mysql.dialect(), compile_kwargs={"literal_binds": True}))
-    print(f"[DEBUG SQL] Query generado (ARTICV):")
-    print(sql_compilado)
-    print(f"[DEBUG SQL] Parámetros: {query.statement.compile().params}")
+    # Ordenar por valor total vendido (descendente) - DE MAYOR A MENOR
+    query = query.order_by(func.sum(Dventa.DVEVAL).desc())
 
     # Ejecutar query
     try:
@@ -304,21 +359,27 @@ def reporte_productos_vendidos(db, Pas, Artic, filtros):
     # Formatear resultados
     items = []
     total_vendido = 0
+    total_valor = 0
 
     for idx, row in enumerate(resultados):
         if idx < 3:  # Debug: mostrar primeras 3 filas
             print(f"[DEBUG] Row {idx}: codigo={row.codigo}, desc={row.descripcion}, cant={row.cuantos_se_vendio}, precio={row.precio_promedio}")
 
         cantidad_vendida = float(row.cuantos_se_vendio) if row.cuantos_se_vendio else 0
+        valor_total = float(row.valor_total_vendido) if row.valor_total_vendido else 0
+
         total_vendido += cantidad_vendida
+        total_valor += valor_total
 
         items.append({
             'codigo': str(row.codigo) if row.codigo else '',
             'descripcion': str(row.descripcion) if row.descripcion else 'N/A',
             'cuantos_se_vendio': round(cantidad_vendida, 2),
             'precio_promedio': round(float(row.precio_promedio), 2) if row.precio_promedio else 0,
-            'valor_total_vendido': round(float(row.valor_total_vendido), 2) if hasattr(row, 'valor_total_vendido') and row.valor_total_vendido else 0,
+            'valor_total_vendido': round(valor_total, 2),
             'existencias': float(row.existencias) if row.existencias else 0,
+            'costo_promedio': round(float(row.costo_promedio), 2) if row.costo_promedio else 0,
+            'costo_articulo': round(float(row.costo_articulo), 2) if row.costo_articulo else 0,
             'marca': str(row.marca) if row.marca else '',
             'proveedor': str(row.proveedor) if row.proveedor else ''
         })
@@ -330,7 +391,8 @@ def reporte_productos_vendidos(db, Pas, Artic, filtros):
         'filtros_aplicados': filtros,
         'estadisticas': {
             'totalProductos': len(items),
-            'totalVendido': formatear_numero(total_vendido)
+            'totalCantidadVendida': formatear_numero(total_vendido),
+            'totalValorVendido': formatear_numero(total_valor)
         },
         'datos': items
     }
@@ -341,6 +403,8 @@ def reporte_utilidad(db, Pas, Artic, filtros):
     3er Informe: Utilidad/Ganancias
 
     Genera reporte de utilidad con ganancias en pesos y porcentaje
+    Ordenado por margen % (descendente) y luego por ganancia absoluta (descendente)
+    Incluye ARTCPR y ARTCOS de la tabla Artic
 
     Args:
         db: Instancia de SQLAlchemy
@@ -358,15 +422,12 @@ def reporte_utilidad(db, Pas, Artic, filtros):
     Dventa = crear_modelo_dventa(sufijo_año, db)
 
     # Construir query con cálculos de utilidad
-    # Usar COALESCE para manejar NULLs en el costo
-    # Priorizar PASCOS (costo en dvent) sobre ARTCPR (costo promedio en artic)
-    from sqlalchemy import func as sqlfunc, case
-
     query = db.session.query(
         Dventa.DVECOD.label('codigo'),
         Pas.PASNOM.label('descripcion'),
         func.sum(Dventa.DVECAN).label('cuantos_se_vendio'),
-        func.coalesce(Artic.ARTCPR, Dventa.PASCOS, 0).label('costo'),  # Costo con fallback
+        func.coalesce(Artic.ARTCPR, Dventa.PASCOS, 0).label('costo_promedio'),  # Costo promedio
+        func.coalesce(Artic.ARTCOS, 0).label('costo_articulo'),  # NUEVO: Costo del artículo
         func.avg(Dventa.DVEPRE).label('precio_de_venta'),
         (func.sum(Dventa.DVEPRE * Dventa.DVECAN) -
          func.sum(func.coalesce(Artic.ARTCPR, Dventa.PASCOS, 0) * Dventa.DVECAN)).label('ganancia_en_pesos'),
@@ -418,22 +479,14 @@ def reporte_utilidad(db, Pas, Artic, filtros):
         query = query.filter(and_(*filtros_lista))
 
     # Agrupar por producto
-    # Nota: Usando COALESCE en costo, así que lo incluimos en GROUP BY
     query = query.group_by(
         Dventa.DVECOD,
         Pas.PASNOM,
-        func.coalesce(Artic.ARTCPR, Dventa.PASCOS, 0)
+        func.coalesce(Artic.ARTCPR, Dventa.PASCOS, 0),
+        func.coalesce(Artic.ARTCOS, 0)
     )
 
-    # Ordenar por ganancia (descendente)
-    query = query.order_by(func.sum(Dventa.DVEPRE * Dventa.DVECAN).desc())
-
-    # Debug: Mostrar SQL completo
-    from sqlalchemy.dialects import mysql
-    sql_compilado = str(query.statement.compile(dialect=mysql.dialect(), compile_kwargs={"literal_binds": True}))
-    print(f"[DEBUG UTILIDAD SQL] Query generado:")
-    print(sql_compilado)
-    print(f"[DEBUG UTILIDAD SQL] Parámetros: {query.statement.compile().params}")
+    # NO ordenamos aquí - lo haremos después de calcular el margen %
 
     # Ejecutar query
     try:
@@ -443,19 +496,16 @@ def reporte_utilidad(db, Pas, Artic, filtros):
         print(f"[ERROR UTILIDAD] Error al ejecutar query: {str(e)}")
         raise
 
-    # Formatear resultados
+    # Formatear resultados y calcular margen %
     items = []
     total_ganancia_pesos = 0
     total_ventas = 0
 
     for idx, row in enumerate(resultados):
-        if idx < 3:  # Debug: mostrar primeras 3 filas
-            print(f"[DEBUG UTILIDAD] Row {idx}: codigo={row.codigo}, desc={row.descripcion}, cant={row.cuantos_se_vendio}, ganancia={row.ganancia_en_pesos}")
-
         ganancia_pesos = float(row.ganancia_en_pesos) if row.ganancia_en_pesos else 0
         ventas = float(row.total_ventas) if row.total_ventas else 0
 
-        # Calcular porcentaje de ganancia
+        # Calcular porcentaje de ganancia (margen %)
         if ventas > 0:
             ganancia_porcentaje = (ganancia_pesos / ventas) * 100
         else:
@@ -468,12 +518,16 @@ def reporte_utilidad(db, Pas, Artic, filtros):
             'codigo': str(row.codigo) if row.codigo else '',
             'descripcion': str(row.descripcion) if row.descripcion else 'N/A',
             'cuantos_se_vendio': float(row.cuantos_se_vendio) if row.cuantos_se_vendio else 0,
-            'costo': float(row.costo) if row.costo else 0,
+            'costo_promedio': float(row.costo_promedio) if row.costo_promedio else 0,
+            'costo_articulo': float(row.costo_articulo) if row.costo_articulo else 0,
             'precio_de_venta': float(row.precio_de_venta) if row.precio_de_venta else 0,
             'ganancia_en_pesos': round(ganancia_pesos, 2),
             'ganancias_en_porcentaje': round(ganancia_porcentaje, 2),
             'total_ventas': round(ventas, 2)
         })
+
+    # ORDENAR: Primero por margen % (desc), luego por ganancia absoluta (desc)
+    items.sort(key=lambda x: (x['ganancias_en_porcentaje'], x['ganancia_en_pesos']), reverse=True)
 
     # Calcular porcentaje total
     if total_ventas > 0:
@@ -500,185 +554,242 @@ def reporte_utilidad(db, Pas, Artic, filtros):
 # FUNCIONES DE EXPORTACIÓN
 # ========================================
 
-def exportar_a_excel(datos, tipo_reporte):
+def exportar_excel(data, tipo_reporte):
     """
-    Exporta datos a formato Excel con sumatorias y estadísticas
+    Exporta datos a Excel con formato profesional
+    Orden: Detallado → Totales
 
     Args:
-        datos (dict): Datos del reporte
-        tipo_reporte (str): Tipo de reporte
+        data (dict): Datos del reporte
+        tipo_reporte (str): Tipo de reporte ('productos_vendidos', 'utilidad', etc.)
 
     Returns:
-        BytesIO: Buffer con el archivo Excel
+        BytesIO: Archivo Excel en memoria
     """
-    # Crear buffer de salida
     output = BytesIO()
 
-    # Crear archivo Excel con openpyxl
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        # Crear DataFrame con estadísticas
-        estadisticas = datos.get('estadisticas', {})
-        if estadisticas:
-            stats_data = []
-            for key, value in estadisticas.items():
-                # Formatear el nombre de la estadística
-                label = key.replace('_', ' ').replace('total', 'Total').replace('porcentaje', 'Porcentaje').title()
-                stats_data.append({'Métrica': label, 'Valor': str(value)})
+        # HOJA 1: DETALLADO (primero)
+        df_detallado = pd.DataFrame(data['datos'])
 
-            df_stats = pd.DataFrame(stats_data)
-            df_stats.to_excel(writer, sheet_name='Estadísticas', index=False)
+        # Renombrar columnas para que sean más legibles
+        column_map = {
+            'codigo': 'Código',
+            'descripcion': 'Descripción',
+            'cuantos_se_vendio': 'Cantidad Vendida',
+            'precio_promedio': 'Precio Promedio',
+            'precio_de_venta': 'Precio de Venta',
+            'valor_total_vendido': 'Valor Total Vendido',
+            'existencias': 'Existencias',
+            'costo_promedio': 'Costo Promedio',
+            'costo_articulo': 'Costo Artículo',
+            'marca': 'Marca',
+            'proveedor': 'Proveedor',
+            'ganancia_en_pesos': 'Ganancia ($)',
+            'ganancias_en_porcentaje': 'Margen (%)',
+            'total_ventas': 'Total Ventas',
+            'costo': 'Costo'
+        }
 
-            # Aplicar formato a la hoja de estadísticas
-            ws_stats = writer.sheets['Estadísticas']
-            from openpyxl.styles import Font, PatternFill, Alignment
+        df_detallado.rename(columns=column_map, inplace=True)
 
-            # Encabezados en negrita
-            for cell in ws_stats[1]:
-                cell.font = Font(bold=True, size=12)
-                cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-                cell.font = Font(bold=True, color="FFFFFF")
-                cell.alignment = Alignment(horizontal='center')
+        # Agregar fila de totales si aplica
+        tiene_totales = False
+        if tipo_reporte in ['productos_vendidos', 'utilidad']:
+            tiene_totales = True
+            totales = {}
 
-            # Ajustar ancho de columnas
-            ws_stats.column_dimensions['A'].width = 30
-            ws_stats.column_dimensions['B'].width = 20
+            for col in df_detallado.columns:
+                col_lower = col.lower()
+                if any(keyword in col_lower for keyword in ['cantidad', 'vendida', 'valor', 'total', 'ganancia', 'venta', 'existencia']):
+                    if 'porcentaje' not in col_lower and '%' not in col_lower:
+                        totales[col] = df_detallado[col].sum() if col in df_detallado.select_dtypes(include=['number']).columns else ''
+                    else:
+                        totales[col] = ''
+                else:
+                    totales[col] = 'TOTALES' if col == df_detallado.columns[0] else ''
 
-        # Crear DataFrame de datos detallados
-        df = pd.DataFrame(datos['datos'])
-        df.to_excel(writer, sheet_name='Datos', index=False, startrow=0)
+            # Agregar fila de totales
+            df_detallado = pd.concat([df_detallado, pd.DataFrame([totales])], ignore_index=True)
 
-        # Obtener la hoja de datos
-        worksheet = writer.sheets['Datos']
+        # Escribir a Excel
+        df_detallado.to_excel(writer, sheet_name='Detallado', index=False)
 
-        # Aplicar formato a encabezados
-        from openpyxl.styles import Font, PatternFill, Alignment
-        for cell in worksheet[1]:
-            cell.font = Font(bold=True, size=11)
-            cell.fill = PatternFill(start_color="70AD47", end_color="70AD47", fill_type="solid")
-            cell.font = Font(bold=True, color="FFFFFF")
-            cell.alignment = Alignment(horizontal='center')
+        # Aplicar formato
+        worksheet = writer.sheets['Detallado']
+        aplicar_formato_excel(worksheet, df_detallado, tiene_totales=tiene_totales)
 
-        # Ajustar ancho de columnas
-        for column in worksheet.columns:
-            max_length = 0
-            column_letter = column[0].column_letter
-            for cell in column:
-                try:
-                    if len(str(cell.value)) > max_length:
-                        max_length = len(str(cell.value))
-                except:
-                    pass
-            adjusted_width = min(max_length + 2, 50)
-            worksheet.column_dimensions[column_letter].width = adjusted_width
+        # HOJA 2: TOTALES (segundo)
+        if 'estadisticas' in data:
+            df_totales = pd.DataFrame([data['estadisticas']]).T
+            df_totales.columns = ['Valor']
+            df_totales.reset_index(inplace=True)
+            df_totales.rename(columns={'index': 'Métrica'}, inplace=True)
+
+            df_totales.to_excel(writer, sheet_name='Totales', index=False)
+
+            # Aplicar formato a totales
+            worksheet_totales = writer.sheets['Totales']
+            aplicar_formato_excel(worksheet_totales, df_totales, tiene_totales=False)
 
     output.seek(0)
     return output
 
 
-def exportar_a_pdf(datos, tipo_reporte):
+def exportar_pdf(data, tipo_reporte):
     """
-    Exporta datos a formato PDF con sumatorias y estadísticas
+    Exporta datos a PDF con formato horizontal (Legal Landscape)
+    Evita sobreposición de datos y usa todo el espacio disponible
 
     Args:
-        datos (dict): Datos del reporte
+        data (dict): Datos del reporte
         tipo_reporte (str): Tipo de reporte
 
     Returns:
-        BytesIO: Buffer con el archivo PDF
+        BytesIO: Archivo PDF en memoria
     """
     output = BytesIO()
 
-    # Crear PDF con orientación horizontal (landscape)
-    doc = SimpleDocTemplate(output, pagesize=landscape(letter))
+    # Usar Legal Landscape (14" x 8.5") para más espacio horizontal
+    doc = SimpleDocTemplate(
+        output,
+        pagesize=landscape(legal),
+        rightMargin=0.5*inch,
+        leftMargin=0.5*inch,
+        topMargin=0.75*inch,
+        bottomMargin=0.5*inch
+    )
 
-    # Contenedor de elementos
     elements = []
-
-    # Estilos
     styles = getSampleStyleSheet()
 
-    # Título
-    title = Paragraph(f"<b>Reporte: {tipo_reporte.upper().replace('_', ' ').replace('-', ' ')}</b>", styles['Title'])
-    elements.append(title)
-    elements.append(Spacer(1, 0.2*inch))
+    # Estilo para encabezado
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=16,
+        textColor=colors.HexColor('#2C3E50'),
+        spaceAfter=12,
+        alignment=TA_CENTER,
+        fontName='Helvetica-Bold'
+    )
 
-    # Información del reporte
-    info_text = f"Generado: {datos.get('fecha_generacion', '')}"
-    if datos.get('año_consultado'):
-        info_text += f" | Año: {datos.get('año_consultado')}"
-    info = Paragraph(info_text, styles['Normal'])
-    elements.append(info)
-    elements.append(Spacer(1, 0.3*inch))
+    # Estilo para subtítulo
+    subtitle_style = ParagraphStyle(
+        'CustomSubtitle',
+        parent=styles['Normal'],
+        fontSize=10,
+        textColor=colors.HexColor('#7F8C8D'),
+        spaceAfter=20,
+        alignment=TA_CENTER
+    )
 
-    # Sección de Estadísticas/Sumatorias
-    estadisticas = datos.get('estadisticas', {})
-    if estadisticas:
-        # Título de estadísticas
-        stats_title = Paragraph("<b>RESUMEN Y ESTADÍSTICAS</b>", styles['Heading2'])
-        elements.append(stats_title)
-        elements.append(Spacer(1, 0.1*inch))
+    def crear_encabezado_tabla():
+        """Crea el encabezado que se repite en cada página"""
+        fecha_gen = datetime.fromisoformat(data['fecha_generacion']).strftime('%d/%m/%Y %H:%M')
 
-        # Crear tabla de estadísticas
-        stats_data = [['Métrica', 'Valor']]
-        for key, value in estadisticas.items():
-            # Formatear el nombre de la estadística
-            label = key.replace('_', ' ').replace('total', 'Total').replace('porcentaje', 'Porcentaje').title()
-            stats_data.append([label, str(value)])
+        # Título
+        titulo_map = {
+            'productos_vendidos': 'Reporte de Productos Vendidos',
+            'utilidad': 'Reporte de Utilidad y Ganancias'
+        }
+        titulo = Paragraph(titulo_map.get(tipo_reporte, 'Reporte'), title_style)
+        elements.append(titulo)
 
-        stats_table = Table(stats_data, colWidths=[3*inch, 2*inch])
-        stats_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4472C4')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 12),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#E7E6E6')),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black),
-            ('FONTSIZE', (0, 1), (-1, -1), 10),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F2F2F2')])
-        ]))
+        # Subtítulo con fecha
+        subtitulo = Paragraph(f'Generado el {fecha_gen}', subtitle_style)
+        elements.append(subtitulo)
 
-        elements.append(stats_table)
-        elements.append(Spacer(1, 0.4*inch))
-
-    # Título de datos detallados
-    data_title = Paragraph("<b>DATOS DETALLADOS</b>", styles['Heading2'])
-    elements.append(data_title)
-    elements.append(Spacer(1, 0.1*inch))
+    # Agregar encabezado inicial
+    crear_encabezado_tabla()
 
     # Preparar datos para la tabla
-    if datos['datos']:
-        # Obtener headers
-        headers = list(datos['datos'][0].keys())
+    df = pd.DataFrame(data['datos'])
 
-        # Preparar filas
-        table_data = [headers]
-        for item in datos['datos']:
-            row = [str(item.get(key, ''))[:30] for key in headers]  # Limitar a 30 chars
-            table_data.append(row)
+    # Limitar columnas para que quepan en horizontal
+    if tipo_reporte == 'productos_vendidos':
+        columnas_mostrar = ['codigo', 'descripcion', 'cuantos_se_vendio', 'precio_promedio',
+                          'valor_total_vendido', 'costo_promedio', 'costo_articulo']
+        headers = ['Código', 'Descripción', 'Cant.', 'Precio Prom.', 'Valor Total', 'Costo Prom.', 'Costo Art.']
+    elif tipo_reporte == 'utilidad':
+        columnas_mostrar = ['codigo', 'descripcion', 'cuantos_se_vendio', 'precio_de_venta',
+                          'costo_promedio', 'costo_articulo', 'ganancia_en_pesos', 'ganancias_en_porcentaje']
+        headers = ['Código', 'Descripción', 'Cant.', 'Precio Venta', 'Costo Prom.', 'Costo Art.', 'Ganancia ($)', 'Margen (%)']
+    else:
+        columnas_mostrar = df.columns.tolist()[:7]  # Primeras 7 columnas
+        headers = columnas_mostrar
 
-        # Crear tabla con tamaño dinámico
-        num_cols = len(headers)
-        col_width = (landscape(letter)[0] - 2*inch) / num_cols  # Distribuir ancho disponible
+    # Filtrar columnas
+    df_filtrado = df[columnas_mostrar]
 
-        table = Table(table_data, colWidths=[col_width] * num_cols)
+    # Crear tabla
+    table_data = [headers]
 
-        # Estilo de tabla
-        table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#70AD47')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 9),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black),
-            ('FONTSIZE', (0, 1), (-1, -1), 7),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#FFF2CC')])
+    for _, row in df_filtrado.iterrows():
+        fila = []
+        for col in columnas_mostrar:
+            valor = row[col]
+            # Truncar texto largo
+            if isinstance(valor, str) and len(valor) > 30:
+                valor = valor[:27] + '...'
+            elif isinstance(valor, (int, float)):
+                valor = f'{valor:,.2f}'
+            fila.append(str(valor))
+        table_data.append(fila)
+
+    # Calcular anchos de columna dinámicamente
+    page_width = landscape(legal)[0] - 1*inch  # Restar márgenes
+    num_cols = len(headers)
+    col_width = page_width / num_cols
+    col_widths = [col_width] * num_cols
+
+    # Crear tabla con anchos calculados
+    table = Table(table_data, colWidths=col_widths, repeatRows=1)
+
+    # Estilo de tabla
+    table.setStyle(TableStyle([
+        # Encabezado
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#D3D3D3')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 9),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+        ('TOPPADDING', (0, 0), (-1, 0), 8),
+
+        # Datos
+        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 1), (-1, -1), 8),
+        ('ALIGN', (0, 1), (1, -1), 'LEFT'),  # Primeras 2 columnas alineadas a la izquierda
+        ('ALIGN', (2, 1), (-1, -1), 'RIGHT'),  # Resto alineadas a la derecha
+        ('TOPPADDING', (0, 1), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 1), (-1, -1), 4),
+
+        # Bordes
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('LINEBELOW', (0, 0), (-1, 0), 1.5, colors.HexColor('#2C3E50')),
+
+        # Alternar colores de filas
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F8F9FA')]),
+    ]))
+
+    elements.append(table)
+
+    # Agregar estadísticas al final
+    if 'estadisticas' in data:
+        elements.append(Spacer(1, 0.3*inch))
+        stats_data = [[k.replace('_', ' ').title(), str(v)] for k, v in data['estadisticas'].items()]
+        stats_table = Table(stats_data, colWidths=[3*inch, 2*inch])
+        stats_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#E8E8E8')),
+            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
         ]))
-
-        elements.append(table)
+        elements.append(stats_table)
 
     # Construir PDF
     doc.build(elements)

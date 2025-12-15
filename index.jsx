@@ -63,6 +63,15 @@ const ReportesDashboard = () => {
     detalle_productos: false
   });
 
+  // Estado para modal de vista previa
+  const [modalVistaPrevia, setModalVistaPrevia] = useState({
+    visible: false,
+    datos: [],
+    estadisticas: {},
+    formato: 'excel', // 'excel' o 'pdf'
+    cargando: false
+  });
+
   // URL base del API
   const API_BASE_URL = 'http://localhost:5000';
 
@@ -279,46 +288,91 @@ const ReportesDashboard = () => {
    * Exporta el reporte a Excel
    */
   const exportarExcel = () => {
-    if (datos.length === 0) {
-      alert('No hay datos para exportar');
-      return;
-    }
-
-    // Construir URL con todos los filtros
-    const params = new URLSearchParams();
-    params.append('tipo', reporteActivo);
-    params.append('formato', 'excel');
-
-    Object.entries(filtros).forEach(([key, value]) => {
-      if (value && value.trim() !== '') {
-        params.append(key, value);
-      }
-    });
-
-    // Agregar opciones de exportación para ventas
-    if (reporteActivo === 'ventas') {
-      params.append('incluir_narradas', opcionesExportacion.incluir_narradas);
-      params.append('detalle_productos', opcionesExportacion.detalle_productos);
-    }
-
-    // Descargar el archivo
-    const url = `${API_BASE_URL}/api/exportar?${params.toString()}`;
-    window.open(url, '_blank');
+    mostrarVistaPrevia('excel');
   };
 
   /**
    * Exporta el reporte a PDF
    */
   const exportarPDF = () => {
+    mostrarVistaPrevia('pdf');
+  };
+
+  /**
+   * Muestra vista previa antes de exportar
+   */
+  const mostrarVistaPrevia = async (formato) => {
     if (datos.length === 0) {
       alert('No hay datos para exportar');
       return;
     }
 
+    setModalVistaPrevia({
+      visible: true,
+      datos: [],
+      estadisticas: {},
+      formato: formato,
+      cargando: true
+    });
+
+    try {
+      // Construir URL con todos los filtros
+      const params = new URLSearchParams();
+      params.append('tipo', reporteActivo);
+
+      Object.entries(filtros).forEach(([key, value]) => {
+        if (value && value.trim() !== '') {
+          params.append(key, value);
+        }
+      });
+
+      // Agregar opciones de exportación para ventas
+      if (reporteActivo === 'ventas') {
+        params.append('incluir_narradas', opcionesExportacion.incluir_narradas);
+        params.append('detalle_productos', opcionesExportacion.detalle_productos);
+      }
+
+      const url = `${API_BASE_URL}/api/vista-previa?${params.toString()}`;
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        throw new Error('Error al obtener vista previa');
+      }
+
+      const data = await response.json();
+
+      setModalVistaPrevia({
+        visible: true,
+        datos: data.datos || [],
+        estadisticas: data.estadisticas || {},
+        formato: formato,
+        cargando: false,
+        nota: data.nota || null
+      });
+
+    } catch (error) {
+      console.error('Error al cargar vista previa:', error);
+      alert('Error al cargar vista previa: ' + error.message);
+      setModalVistaPrevia({
+        visible: false,
+        datos: [],
+        estadisticas: {},
+        formato: 'excel',
+        cargando: false
+      });
+    }
+  };
+
+  /**
+   * Confirma y ejecuta la exportación
+   */
+  const confirmarExportacion = () => {
+    const { formato } = modalVistaPrevia;
+
     // Construir URL con todos los filtros
     const params = new URLSearchParams();
     params.append('tipo', reporteActivo);
-    params.append('formato', 'pdf');
+    params.append('formato', formato);
 
     Object.entries(filtros).forEach(([key, value]) => {
       if (value && value.trim() !== '') {
@@ -335,6 +389,15 @@ const ReportesDashboard = () => {
     // Descargar el archivo
     const url = `${API_BASE_URL}/api/exportar?${params.toString()}`;
     window.open(url, '_blank');
+
+    // Cerrar modal
+    setModalVistaPrevia({
+      visible: false,
+      datos: [],
+      estadisticas: {},
+      formato: 'excel',
+      cargando: false
+    });
   };
 
   // Cargar datos inicialmente
@@ -1071,6 +1134,129 @@ const ReportesDashboard = () => {
   };
 
   // ========================================
+  // MODAL DE VISTA PREVIA
+  // ========================================
+
+  const ModalVistaPrevia = () => {
+    if (!modalVistaPrevia.visible) return null;
+
+    const { datos: datosPreview, estadisticas: statsPreview, formato, cargando, nota } = modalVistaPrevia;
+
+    return (
+      <div className="fixed inset-0 z-50 overflow-y-auto" onClick={() => setModalVistaPrevia({ ...modalVistaPrevia, visible: false })}>
+        <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
+          {/* Overlay oscuro */}
+          <div className="fixed inset-0 transition-opacity bg-gray-500 bg-opacity-75" aria-hidden="true"></div>
+
+          {/* Centro modal */}
+          <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+
+          {/* Modal */}
+          <div
+            className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-6xl sm:w-full"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+              <div className="sm:flex sm:items-start">
+                <div className="mt-3 text-center sm:mt-0 sm:text-left w-full">
+                  <h3 className="text-2xl leading-6 font-bold text-gray-900 mb-4">
+                    Vista Previa - Exportación a {formato.toUpperCase()}
+                  </h3>
+
+                  {cargando ? (
+                    <div className="flex justify-center items-center py-12">
+                      <RefreshCw className="animate-spin h-12 w-12 text-blue-600" />
+                      <span className="ml-4 text-lg text-gray-600">Cargando vista previa...</span>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Nota si hay */}
+                      {nota && (
+                        <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+                          <p className="text-sm text-yellow-800">ℹ️ {nota}</p>
+                        </div>
+                      )}
+
+                      {/* Estadísticas */}
+                      {statsPreview && Object.keys(statsPreview).length > 0 && (
+                        <div className="mb-6 grid grid-cols-2 md:grid-cols-4 gap-4">
+                          {Object.entries(statsPreview).map(([key, value]) => (
+                            <div key={key} className="bg-blue-50 rounded-lg p-4 border border-blue-200">
+                              <p className="text-xs text-blue-600 font-semibold uppercase">{key.replace(/([A-Z])/g, ' $1').trim()}</p>
+                              <p className="text-lg font-bold text-blue-900">
+                                {typeof value === 'object' ? JSON.stringify(value) : (typeof value === 'number' ? formatNumber(value) : value)}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Tabla de datos */}
+                      {datosPreview && datosPreview.length > 0 && (
+                        <div className="overflow-x-auto max-h-96 border border-gray-300 rounded-lg">
+                          <table className="min-w-full divide-y divide-gray-200">
+                            <thead className="bg-gray-100 sticky top-0">
+                              <tr>
+                                {Object.keys(datosPreview[0]).map((key) => (
+                                  <th
+                                    key={key}
+                                    className="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase tracking-wider"
+                                  >
+                                    {key.replace(/_/g, ' ')}
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-gray-200">
+                              {datosPreview.map((row, idx) => (
+                                <tr key={idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                                  {Object.values(row).map((value, colIdx) => (
+                                    <td key={colIdx} className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">
+                                      {typeof value === 'object' && value !== null
+                                        ? JSON.stringify(value)
+                                        : typeof value === 'number'
+                                        ? formatNumber(value)
+                                        : value || '-'}
+                                    </td>
+                                  ))}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Botones del modal */}
+            <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse gap-3">
+              <button
+                type="button"
+                onClick={confirmarExportacion}
+                disabled={cargando}
+                className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-6 py-3 bg-blue-600 text-base font-semibold text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Download className="mr-2 h-5 w-5" />
+                Confirmar y Exportar
+              </button>
+              <button
+                type="button"
+                onClick={() => setModalVistaPrevia({ ...modalVistaPrevia, visible: false })}
+                className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-6 py-3 bg-white text-base font-semibold text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:w-auto sm:text-sm"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ========================================
   // RENDER PRINCIPAL
   // ========================================
 
@@ -1173,7 +1359,7 @@ const ReportesDashboard = () => {
 
         {/* Footer */}
         <div className="text-center text-sm text-gray-500 mt-8">
-          <p>Sistema de Reportes v1.0 - Desarrollado con React + Flask + SQLAlchemy</p>
+          <p>Sistema de Reportes v2.1 - Made by btw-one©</p>
         </div>
       </div>
 
@@ -1286,6 +1472,9 @@ const ReportesDashboard = () => {
           </div>
         </div>
       )}
+
+      {/* Modal de Vista Previa */}
+      <ModalVistaPrevia />
     </div>
   );
 };

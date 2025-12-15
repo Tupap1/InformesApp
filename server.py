@@ -1,29 +1,35 @@
-"""
-Flask Server para Sistema de Reportes de Inventario y Ventas
-Utiliza SQLAlchemy ORM para conectarse a MySQL
-"""
 
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text, and_, or_, func, distinct
 from datetime import datetime
 import os
+import sys
 from dotenv import load_dotenv
 
 # Importar módulo de reportes
 from reports import (
     reporte_productos_vendidos,
     reporte_utilidad,
-    exportar_a_excel,
-    exportar_a_pdf
+    exportar_excel,
+    exportar_pdf
 )
 
 # Cargar variables de entorno
 load_dotenv()
 
-# Inicializar Flask
-app = Flask(__name__)
+# Determinar el directorio base (para PyInstaller)
+if getattr(sys, 'frozen', False):
+    # Ejecutando como ejecutable empaquetado
+    BASE_DIR = sys._MEIPASS
+else:
+    # Ejecutando como script normal
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Inicializar Flask con la carpeta de archivos estáticos
+STATIC_FOLDER = os.path.join(BASE_DIR, 'dist')
+app = Flask(__name__, static_folder=STATIC_FOLDER, static_url_path='')
 
 # Configuración de CORS
 CORS(app, resources={
@@ -44,6 +50,29 @@ app.config['SQLALCHEMY_ECHO'] = os.getenv('SQL_DEBUG', 'False') == 'True'
 
 # Inicializar SQLAlchemy
 db = SQLAlchemy(app)
+
+# Manejador de errores global
+@app.errorhandler(Exception)
+def handle_error(e):
+    """Maneja todos los errores y devuelve respuesta JSON"""
+    import traceback
+    error_traceback = traceback.format_exc()
+
+    print(f"\n{'='*60}")
+    print(f"ERROR EN LA APLICACIÓN:")
+    print(f"{'='*60}")
+    print(f"Tipo: {type(e).__name__}")
+    print(f"Mensaje: {str(e)}")
+    print(f"\nTraceback:")
+    print(error_traceback)
+    print(f"{'='*60}\n")
+
+    return jsonify({
+        'error': f'{type(e).__name__}: {str(e)}',
+        'tipo': type(e).__name__,
+        'mensaje': str(e),
+        'solucion': 'Verifique la conexión a MySQL y que las credenciales sean correctas'
+    }), 500
 
 
 # ========================================
@@ -329,12 +358,18 @@ def get_reportes():
                 ubicacion=ubicacion
             )
         elif tipo_reporte == 'ventas':
+            # Obtener opciones adicionales para reporte de ventas
+            incluir_narradas = request.args.get('incluir_narradas', 'false').lower() == 'true'
+            detalle_productos = request.args.get('detalle_productos', 'false').lower() == 'true'
+
             resultado = reporte_ventas(
                 codigo=codigo,
                 sucursal=sucursal,
                 fecha_inicio=fecha_inicio,
                 fecha_fin=fecha_fin,
-                ubicacion=ubicacion
+                ubicacion=ubicacion,
+                incluir_narradas=incluir_narradas,
+                detalle_productos=detalle_productos
             )
         else:
             return jsonify({
@@ -844,6 +879,99 @@ def get_utilidad():
         }), 500
 
 
+@app.route('/api/vista-previa', methods=['GET'])
+def vista_previa_reporte():
+    """
+    Endpoint para obtener vista previa de los datos antes de exportar
+
+    Parámetros:
+    - tipo: tipo de reporte (inventario, ventas, productos-vendidos, utilidad)
+    - Todos los filtros del reporte correspondiente
+
+    Retorna:
+    - JSON con los datos del reporte y estadísticas
+    """
+    try:
+        tipo_reporte = request.args.get('tipo', 'inventario')
+
+        # Obtener filtros
+        filtros = {
+            'codigo': request.args.get('codigo'),
+            'sucursal': request.args.get('sucursal'),
+            'proveedor': request.args.get('proveedor'),
+            'grupo': request.args.get('grupo'),
+            'fechaInicio': request.args.get('fechaInicio'),
+            'fechaFin': request.args.get('fechaFin'),
+            'estado': request.args.get('estado'),
+            'ubicacion': request.args.get('ubicacion')
+        }
+
+        # Generar el reporte según el tipo
+        if tipo_reporte == 'inventario':
+            datos = reporte_inventario(
+                codigo=filtros.get('codigo'),
+                sucursal=filtros.get('sucursal'),
+                proveedor=filtros.get('proveedor'),
+                fecha_inicio=filtros.get('fechaInicio'),
+                fecha_fin=filtros.get('fechaFin'),
+                estado=filtros.get('estado'),
+                ubicacion=filtros.get('ubicacion')
+            )
+        elif tipo_reporte == 'ventas':
+            incluir_narradas = request.args.get('incluir_narradas', 'false').lower() == 'true'
+            detalle_productos = request.args.get('detalle_productos', 'false').lower() == 'true'
+
+            datos = reporte_ventas(
+                codigo=filtros.get('codigo'),
+                sucursal=filtros.get('sucursal'),
+                fecha_inicio=filtros.get('fechaInicio'),
+                fecha_fin=filtros.get('fechaFin'),
+                ubicacion=filtros.get('ubicacion'),
+                incluir_narradas=incluir_narradas,
+                detalle_productos=detalle_productos
+            )
+        elif tipo_reporte == 'productos-vendidos':
+            datos = reporte_productos_vendidos(db, Pas, Artic, filtros)
+        elif tipo_reporte == 'utilidad':
+            datos = reporte_utilidad(db, Pas, Artic, filtros)
+        else:
+            return jsonify({
+                'error': f'Tipo de reporte no soportado: {tipo_reporte}'
+            }), 400
+
+        # Retornar datos para vista previa (limitar a primeras 100 filas)
+        datos_preview = datos.copy()
+
+        # Limpiar campos complejos para la vista previa
+        if 'datos' in datos_preview:
+            # Filtrar campos que son objetos (como 'alertas')
+            datos_limpios = []
+            for item in datos_preview['datos']:
+                item_limpio = {}
+                for key, value in item.items():
+                    # Solo incluir valores primitivos (no objetos ni arrays)
+                    if not isinstance(value, (dict, list)):
+                        item_limpio[key] = value
+                datos_limpios.append(item_limpio)
+
+            # Limitar a 100 filas
+            if len(datos_limpios) > 100:
+                datos_preview['datos'] = datos_limpios[:100]
+                datos_preview['nota'] = f'Mostrando las primeras 100 filas de {len(datos["datos"])} totales'
+            else:
+                datos_preview['datos'] = datos_limpios
+
+        return jsonify(datos_preview)
+
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'error': 'Error al generar vista previa',
+            'detalle': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+
 @app.route('/api/exportar', methods=['GET'])
 def exportar_reporte():
     """
@@ -906,7 +1034,7 @@ def exportar_reporte():
 
         # Exportar según el formato
         if formato == 'excel':
-            buffer = exportar_a_excel(datos, tipo_reporte)
+            buffer = exportar_excel(datos, tipo_reporte)
             filename = f'reporte_{tipo_reporte}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
 
             return send_file(
@@ -916,7 +1044,7 @@ def exportar_reporte():
                 download_name=filename
             )
         elif formato == 'pdf':
-            buffer = exportar_a_pdf(datos, tipo_reporte)
+            buffer = exportar_pdf(datos, tipo_reporte)
             filename = f'reporte_{tipo_reporte}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.pdf'
 
             return send_file(
@@ -935,6 +1063,25 @@ def exportar_reporte():
             'error': 'Error al exportar el reporte',
             'detalle': str(e)
         }), 500
+
+
+# ========================================
+# RUTAS PARA SERVIR FRONTEND ESTÁTICO
+# ========================================
+
+@app.route('/')
+def serve_index():
+    """Sirve el archivo index.html principal"""
+    return send_from_directory(app.static_folder, 'index.html')
+
+@app.route('/<path:path>')
+def serve_static(path):
+    """Sirve archivos estáticos del frontend (CSS, JS, imágenes)"""
+    if os.path.exists(os.path.join(app.static_folder, path)):
+        return send_from_directory(app.static_folder, path)
+    else:
+        # Si el archivo no existe, servir index.html (para SPA routing)
+        return send_from_directory(app.static_folder, 'index.html')
 
 
 # ========================================
@@ -960,12 +1107,14 @@ if __name__ == '__main__':
     - GET  /api/reportes                    -> Reportes (inventario, ventas)
     - GET  /api/reportes/productos-vendidos -> 2do Informe: Productos Vendidos
     - GET  /api/reportes/utilidad           -> 3er Informe: Utilidad/Ganancias
+    - GET  /api/vista-previa                -> Vista previa antes de exportar
     - GET  /api/exportar                    -> Exportar a Excel/PDF
 
     Ejemplos de uso:
     http://localhost:{port}/api/reportes?tipo=inventario&sucursal=01
     http://localhost:{port}/api/reportes/productos-vendidos?fechaInicio=2025-01-01&fechaFin=2025-12-31
     http://localhost:{port}/api/reportes/utilidad?sucursal=01&fechaInicio=2025-01-01
+    http://localhost:{port}/api/vista-previa?tipo=utilidad&fechaInicio=2025-01-01
     http://localhost:{port}/api/exportar?tipo=utilidad&formato=excel&fechaInicio=2025-01-01
     """)
 
