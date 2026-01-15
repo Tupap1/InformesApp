@@ -68,22 +68,24 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=['pyi_rth_numpy.py'],  # Hook personalizado para numpy
     excludes=[
         'tkinter',
-        'tkinter.test',
         '_tkinter',
-        'test',
-        'unittest',
-        'pydoc',
-        'pkg_resources',
-        'setuptools',
+        'matplotlib',
+        'IPython',
+        'notebook',
+        'jupyter',
+        'scipy',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
     noarchive=False,
 )
+
+# No aplicar filtros agresivos - pueden eliminar módulos necesarios
+# PyInstaller con numpy 1.26.4 funciona correctamente sin filtros adicionales
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 

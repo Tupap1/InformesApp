@@ -42,6 +42,29 @@ SQL_DEBUG=False
             pass
 
 
+def crear_archivo_error(tipo_error, mensaje):
+    """Crea un archivo de error visible en el escritorio del usuario"""
+    try:
+        desktop = os.path.join(os.path.join(os.environ['USERPROFILE']), 'Desktop')
+        error_file = os.path.join(desktop, 'ERROR_SistemaReportes.txt')
+
+        with open(error_file, 'w', encoding='utf-8') as f:
+            f.write("="*60 + "\n")
+            f.write("ERROR AL INICIAR SISTEMA DE REPORTES\n")
+            f.write("="*60 + "\n\n")
+            f.write(f"Tipo de Error: {tipo_error}\n\n")
+            f.write(f"Mensaje:\n{mensaje}\n\n")
+            f.write("="*60 + "\n")
+            f.write("SOLUCIÓN:\n")
+            f.write("="*60 + "\n\n")
+            f.write("Revise los logs en:\n")
+            appdata = os.environ.get('APPDATA', 'C:\\Users\\[Usuario]\\AppData\\Roaming')
+            f.write(f"{appdata}\\SistemaReportes\\logs\\reportes_[FECHA].log\n\n")
+            f.write("Si el problema persiste, contacte al soporte técnico.\n")
+    except:
+        pass  # Si no se puede crear el archivo, no hay problema
+
+
 def configurar_logging():
     """Configura el sistema de logging"""
     # Crear carpeta de logs en AppData del usuario para evitar problemas de permisos
@@ -81,26 +104,51 @@ def configurar_logging():
 
 def iniciar_servidor():
     """Inicia el servidor Flask con Waitress (producción)"""
+    logger = None
     try:
         from dotenv import load_dotenv
 
         # Cargar .env con codificación UTF-8 explícita para evitar errores en Windows
         env_path = os.path.join(os.path.dirname(__file__), '.env')
-        load_dotenv(env_path, encoding='utf-8')
+
+        # Verificar si .env existe
+        if os.path.exists(env_path):
+            load_dotenv(env_path, encoding='utf-8')
+        else:
+            # Si no existe, crear uno por defecto
+            crear_env_default()
+            load_dotenv(env_path, encoding='utf-8')
 
         # Configurar logging
         logger = configurar_logging()
 
         logger.info("Cargando módulos del servidor...")
+        logger.info(f"Python version: {sys.version}")
+        logger.info(f"Ejecutable: {sys.executable}")
+        logger.info(f"Directorio de trabajo: {os.getcwd()}")
 
-        # Importar el módulo del servidor
-        import server
-        from waitress import serve
-
-        # Obtener configuración
+        # Obtener configuración ANTES de importar módulos
         port = int(os.getenv('PORT', 5000))
         host = os.getenv('HOST', '0.0.0.0')
         threads = int(os.getenv('THREADS', 4))
+        database_uri = os.getenv('DATABASE_URI', 'mysql+mysqlconnector://root:@localhost:3306/pv')
+
+        logger.info(f"Configuración cargada desde .env:")
+        logger.info(f"  PORT: {port}")
+        logger.info(f"  HOST: {host}")
+        logger.info(f"  THREADS: {threads}")
+        # Ocultar contraseña en logs
+        db_uri_safe = database_uri.split('@')[0].split('://')[0] + '://***@' + database_uri.split('@')[1] if '@' in database_uri else database_uri
+        logger.info(f"  DATABASE_URI: {db_uri_safe}")
+
+        # Importar el módulo del servidor
+        logger.info("Importando módulo server.py...")
+        import server
+        logger.info("✓ Módulo server.py importado correctamente")
+
+        logger.info("Importando Waitress...")
+        from waitress import serve
+        logger.info("✓ Waitress importado correctamente")
 
         # Obtener ubicación de logs
         appdata = os.environ.get('APPDATA', os.path.dirname(__file__))
@@ -117,6 +165,7 @@ def iniciar_servidor():
         logger.info(f"Logs: {log_location}")
         logger.info("="*60)
         logger.info(f"Iniciando Waitress en {host}:{port} con {threads} threads")
+        logger.info("La aplicación está lista. Acceda en: http://localhost:5000")
 
         # Iniciar servidor Waitress (headless, producción)
         serve(
@@ -128,11 +177,36 @@ def iniciar_servidor():
             _quiet=False
         )
 
+    except ImportError as e:
+        error_msg = f"ERROR DE IMPORTACIÓN: {str(e)}\nFaltan dependencias. La aplicación no puede iniciar."
+
+        if logger:
+            logger.error(f"ERROR DE IMPORTACIÓN: {str(e)}")
+            logger.error("Faltan dependencias. La aplicación no puede iniciar.")
+            import traceback
+            logger.error(f"Traceback:\n{traceback.format_exc()}")
+        else:
+            print(error_msg)
+
+        # Crear archivo de error visible en el escritorio
+        crear_archivo_error("ImportError", str(e))
+        sys.exit(1)
+
     except Exception as e:
-        logger = logging.getLogger('SistemaReportes')
-        logger.error(f"ERROR al iniciar el servidor: {type(e).__name__}: {str(e)}")
-        import traceback
-        logger.error(f"Traceback:\n{traceback.format_exc()}")
+        error_msg = f"ERROR al iniciar el servidor: {type(e).__name__}: {str(e)}"
+
+        if logger:
+            logger.error(error_msg)
+            import traceback
+            logger.error(f"Traceback:\n{traceback.format_exc()}")
+        else:
+            print(error_msg)
+            import traceback
+            print(f"Traceback:\n{traceback.format_exc()}")
+
+        # Crear archivo de error visible en el escritorio
+        crear_archivo_error(type(e).__name__, str(e))
+        sys.exit(1)
 
 
 def abrir_navegador():
@@ -146,6 +220,10 @@ def abrir_navegador():
 
 if __name__ == '__main__':
     try:
+        print("="*60)
+        print("Sistema de Reportes - Iniciando...")
+        print("="*60)
+
         # Crear .env con valores por defecto si no existe
         # (El instalador de Inno Setup ya lo crea, esto es solo para instalaciones manuales)
         crear_env_default()
@@ -158,11 +236,23 @@ if __name__ == '__main__':
         iniciar_servidor()
 
     except KeyboardInterrupt:
-        logger = logging.getLogger('SistemaReportes')
-        logger.info("Servidor detenido por el usuario")
+        try:
+            logger = logging.getLogger('SistemaReportes')
+            logger.info("Servidor detenido por el usuario")
+        except:
+            print("\nServidor detenido por el usuario")
 
     except Exception as e:
-        logger = logging.getLogger('SistemaReportes')
-        logger.error(f"ERROR CRÍTICO: {type(e).__name__}: {str(e)}")
-        import traceback
-        logger.error(f"Traceback:\n{traceback.format_exc()}")
+        try:
+            logger = logging.getLogger('SistemaReportes')
+            logger.error(f"ERROR CRÍTICO: {type(e).__name__}: {str(e)}")
+            import traceback
+            logger.error(f"Traceback:\n{traceback.format_exc()}")
+        except:
+            print(f"\nERROR CRÍTICO: {type(e).__name__}: {str(e)}")
+            import traceback
+            print(f"Traceback:\n{traceback.format_exc()}")
+
+        # Crear archivo de error visible en el escritorio
+        crear_archivo_error(type(e).__name__, str(e))
+        sys.exit(1)
