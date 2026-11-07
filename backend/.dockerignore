@@ -1,0 +1,16 @@
+# Backend .dockerignore
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+*.log
+.git/
+.gitignore
+.env
+.dockerignore
+*.md

@@ -1,0 +1,88 @@
+# electron-builder configuration
+# This can also be included in package.json under "build" key
+# Separated for clarity and better organization
+
+appId: com.yourcompany.reportes-dashboard
+productName: Sistema de Reportes
+copyright: Copyright © 2026
+
+# Directories
+directories:
+  output: release
+  buildResources: electron/build
+
+# Files to include in the app
+files:
+  - dist/**/*
+  - electron/**/*
+  - "!electron/build/**/*"
+  - package.json
+
+# Extra resources to bundle (Python backend, .env, etc.)
+extraResources:
+  - from: backend/dist
+    to: backend/dist
+    filter:
+      - "**/*"
+  - from: .env
+    to: .env
+
+# Windows configuration
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: electron/build/icon.ico
+  artifactName: ${productName}-Setup-${version}.${ext}
+
+# NSIS installer configuration (Windows)
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  allowElevation: true
+  installerIcon: electron/build/icon.ico
+  uninstallerIcon: electron/build/icon.ico
+  installerHeaderIcon: electron/build/icon.ico
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Sistema de Reportes
+  perMachine: false
+  runAfterFinish: true
+
+# Mac configuration (optional)
+mac:
+  target:
+    - dmg
+    - zip
+  icon: electron/build/icon.icns
+  category: public.app-category.business
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: electron/build/entitlements.mac.plist
+  entitlementsInherit: electron/build/entitlements.mac.plist
+
+# Linux configuration (optional)
+linux:
+  target:
+    - AppImage
+    - deb
+  icon: electron/build/icon.png
+  category: Office
+  executableName: sistema-reportes
+
+# Compression
+compression: normal
+
+# File associations (optional)
+# fileAssociations:
+#   - ext: report
+#     name: Report File
+#     description: Sistema de Reportes Report File
+#     icon: electron/build/fileIcon.ico
+
+# Protocols (optional)
+# protocols:
+#   - name: sistema-reportes
+#     schemes:
+#       - reportes

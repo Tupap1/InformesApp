@@ -1,6 +1,46 @@
+# Node.js
 node_modules
-.env
-.claude
+package-lock.json
+
+# Python
 __pycache__
+*.pyc
+*.pyo
+*.pyd
 venv
+env
+.venv
+
+# Environment
+.env
+.env.local
+
+# Build outputs
+dist
+build
+backend/dist
+backend/build
+release
+*.spec.backup
+
+# Logs
+*.log
+logs
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode
+.idea
+.claude
+*.swp
+*.swo
+*~
+
+# PyInstaller
+*.manifest
+*.spec.backup
 

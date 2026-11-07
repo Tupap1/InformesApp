@@ -73,7 +73,7 @@ const ReportesDashboard = () => {
   });
 
   // URL base del API
-  const API_BASE_URL = 'http://localhost:5000';
+  const API_BASE_URL = 'http://localhost:5001';
 
   // ========================================
   // UTILIDADES DE FORMATO
@@ -826,9 +826,8 @@ const ReportesDashboard = () => {
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">{item.proveedor}</td>
                   <td className="px-4 py-3 whitespace-nowrap text-center">
-                    <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
-                      item.estado === 'ACT' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                    }`}>
+                    <span className={`px-2 py-1 text-xs font-semibold rounded-full ${item.estado === 'ACT' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                      }`}>
                       {item.estado}
                     </span>
                   </td>
@@ -1109,14 +1108,12 @@ const ReportesDashboard = () => {
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-semibold text-blue-600">
                     ${formatNumber(item.total_ventas)}
                   </td>
-                  <td className={`px-4 py-3 whitespace-nowrap text-sm text-right font-bold ${
-                    item.ganancia_en_pesos >= 0 ? 'text-green-600' : 'text-red-600'
-                  }`}>
+                  <td className={`px-4 py-3 whitespace-nowrap text-sm text-right font-bold ${item.ganancia_en_pesos >= 0 ? 'text-green-600' : 'text-red-600'
+                    }`}>
                     ${formatNumber(item.ganancia_en_pesos)}
                   </td>
-                  <td className={`px-4 py-3 whitespace-nowrap text-sm text-right font-bold ${
-                    item.ganancias_en_porcentaje >= 0 ? 'text-green-600' : 'text-red-600'
-                  }`}>
+                  <td className={`px-4 py-3 whitespace-nowrap text-sm text-right font-bold ${item.ganancias_en_porcentaje >= 0 ? 'text-green-600' : 'text-red-600'
+                    }`}>
                     {item.ganancias_en_porcentaje?.toFixed(2)}%
                   </td>
                 </tr>
@@ -1215,8 +1212,8 @@ const ReportesDashboard = () => {
                                       {typeof value === 'object' && value !== null
                                         ? JSON.stringify(value)
                                         : typeof value === 'number'
-                                        ? formatNumber(value)
-                                        : value || '-'}
+                                          ? formatNumber(value)
+                                          : value || '-'}
                                     </td>
                                   ))}
                                 </tr>
@@ -1273,44 +1270,40 @@ const ReportesDashboard = () => {
         <div className="bg-white rounded-lg shadow mb-6 p-2 grid grid-cols-2 md:grid-cols-4 gap-2">
           <button
             onClick={() => cambiarReporte('inventario')}
-            className={`py-3 px-4 rounded-md font-semibold transition-colors flex items-center justify-center gap-2 ${
-              reporteActivo === 'inventario'
+            className={`py-3 px-4 rounded-md font-semibold transition-colors flex items-center justify-center gap-2 ${reporteActivo === 'inventario'
                 ? 'bg-blue-600 text-white'
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
+              }`}
           >
             <Package size={20} />
             <span className="hidden sm:inline">Inventario</span>
           </button>
           <button
             onClick={() => cambiarReporte('ventas')}
-            className={`py-3 px-4 rounded-md font-semibold transition-colors flex items-center justify-center gap-2 ${
-              reporteActivo === 'ventas'
+            className={`py-3 px-4 rounded-md font-semibold transition-colors flex items-center justify-center gap-2 ${reporteActivo === 'ventas'
                 ? 'bg-blue-600 text-white'
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
+              }`}
           >
             <TrendingUp size={20} />
             <span className="hidden sm:inline">Ventas</span>
           </button>
           <button
             onClick={() => cambiarReporte('productos-vendidos')}
-            className={`py-3 px-4 rounded-md font-semibold transition-colors flex items-center justify-center gap-2 ${
-              reporteActivo === 'productos-vendidos'
+            className={`py-3 px-4 rounded-md font-semibold transition-colors flex items-center justify-center gap-2 ${reporteActivo === 'productos-vendidos'
                 ? 'bg-blue-600 text-white'
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
+              }`}
           >
             <ShoppingCart size={20} />
             <span className="hidden sm:inline">Productos Vendidos</span>
           </button>
           <button
             onClick={() => cambiarReporte('utilidad')}
-            className={`py-3 px-4 rounded-md font-semibold transition-colors flex items-center justify-center gap-2 ${
-              reporteActivo === 'utilidad'
+            className={`py-3 px-4 rounded-md font-semibold transition-colors flex items-center justify-center gap-2 ${reporteActivo === 'utilidad'
                 ? 'bg-blue-600 text-white'
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
+              }`}
           >
             <PiggyBank size={20} />
             <span className="hidden sm:inline">Utilidad</span>
